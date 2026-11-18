@@ -4,11 +4,40 @@ import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+// Limite básico por IP para proteger a cota gratuita da API.
+// Armazenamento em memória: reinicia com o servidor e não substitui
+// uma solução persistente para serviços com múltiplas instâncias.
+const requestsByIp = new Map();
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_REQUESTS = 10;
+function limitChatRequests(req, res, next) {
+  const now = Date.now();
+  const ip = req.ip || 'unknown';
+  const record = requestsByIp.get(ip);
+  if (!record || now >= record.resetAt) {
+    requestsByIp.set(ip, { count: 1, resetAt: now + WINDOW_MS });
+    return next();
+  }
+  if (record.count >= MAX_REQUESTS) {
+    res.set('Retry-After', String(Math.ceil((record.resetAt - now) / 1000)));
+    return res.status(429).json({error:'Limite de 10 mensagens a cada 15 minutos atingido. Tente novamente mais tarde.'});
+  }
+  record.count += 1;
+  next();
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of requestsByIp) {
+    if (now >= record.resetAt) requestsByIp.delete(ip);
+  }
+}, WINDOW_MS).unref();
 app.use(express.json({limit:'100kb'}));
 const port=Number(process.env.PORT)||3001;
 
 app.get('/api/health',(_req,res)=>res.json({ok:true,configured:Boolean(process.env.GEMINI_API_KEY)}));
-app.post('/api/chat',async(req,res)=>{
+app.post('/api/chat',limitChatRequests,async(req,res)=>{
  const apiKey=process.env.GEMINI_API_KEY;
  if(!apiKey||apiKey==='COLE_SUA_CHAVE_AQUI'||apiKey==='COLE_SUA_CHAVE_DO_GEMINI_AQUI')return res.status(503).json({error:'Configure GEMINI_API_KEY no arquivo .env.'});
  const messages=req.body?.messages;
