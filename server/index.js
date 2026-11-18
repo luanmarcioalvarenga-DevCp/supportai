@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 
 const app = express();
@@ -55,4 +57,12 @@ app.post('/api/chat',limitChatRequests,async(req,res)=>{
   return res.status(502).json({error:'Não foi possível consultar o Gemini neste momento.'});
  }
 });
-app.listen(port,()=>console.log('SupportAI API em http://localhost:'+port));
+// Servir o frontend React compilado no mesmo domínio da API.
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(currentDir, '../dist');
+app.use(express.static(distDir));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(distDir, 'index.html'));
+});
+app.listen(port,()=>console.log('SupportAI em http://localhost:'+port));
